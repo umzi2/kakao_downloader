@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  check:
+    name: проверка
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Кеш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: check
+
+      - run: cargo clippy --all-targets --locked
+      - run: cargo test --locked
+
+  build:
+    name: сборка ${{ matrix.target }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: musl — статические бинарники без glibc, запускаются где угодно
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            cross: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            cross: true
+          # Linux: gnu — для систем, где нужна системная libc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          # Windows: msvc + статический CRT, чтобы не требовался Visual C++ Redistributable
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            static_crt: true
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            static_crt: true
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            static_crt: true
+          # macOS: оба раннера собираются на arm64-раннере (SDK универсальный)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить Rust и цель сборки
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Кеш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Установить cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Установить NASM
+        if: matrix.static_crt
+        run: choco install nasm --no-progress -y
+
+      - name: Собрать через cross
+        if: matrix.cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Собрать локально
+        if: ${{ !matrix.cross }}
+        env:
+          RUSTFLAGS: ${{ matrix.static_crt && '-C target-feature=+crt-static' || '' }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Загрузить бинарник
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            target/${{ matrix.target }}/release/kakao_downloader
+            target/${{ matrix.target }}/release/kakao_downloader.exe
+
+  package:
+    name: портативные архивы
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Собрать архивы и контрольные суммы
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          fi
+
+          mkdir -p dist
+
+          for dir in artifacts/bin-*; do
+            target="${dir#artifacts/bin-}"
+            binary=""
+            for candidate in "$dir"/kakao_downloader "$dir"/kakao_downloader.exe; do
+              if [[ -f "$candidate" ]]; then
+                binary="$candidate"
+              fi
+            done
+
+            if [[ -z "$binary" ]]; then
+              echo "бинарник для $target не найден в $dir" >&2
+              exit 1
+            fi
+
+            name="kakao_downloader-${version}-${target}"
+            rm -rf stage
+            mkdir -p "stage/$name"
+            install -m 0755 "$binary" "stage/$name/$(basename "$binary")"
+            install -m 0644 LICENSE "stage/$name/LICENSE"
+
+            if [[ "$binary" == *.exe ]]; then
+              (cd stage && zip -q -r "../dist/$name.zip" "$name")
+            else
+              tar -czf "dist/$name.tar.gz" -C stage "$name"
+            fi
+          done
+
+          rm -rf stage
+          (cd dist && sha256sum ./* > SHA256SUMS)
+          ls -lh dist
+
+      - name: Загрузить архивы как артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Опубликовать релиз
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
