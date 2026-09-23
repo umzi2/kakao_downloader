@@ -28,12 +28,16 @@ impl TextInput {
 
     pub fn visible(&self, focused: bool) -> String {
         if !focused {
-            return self.value.clone();
+            return super::ascii::convert(&self.value).into_owned();
         }
 
         let at = self.byte_index(self.cursor);
         let (before, after) = self.value.split_at(at);
-        format!("{before}▏{after}")
+        if super::ascii::enabled() {
+            format!("{}|{}", super::ascii::convert(before), super::ascii::convert(after))
+        } else {
+            format!("{before}▏{after}")
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {

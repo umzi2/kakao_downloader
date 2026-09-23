@@ -2,6 +2,7 @@ use ratatui::{
     Frame,
     layout::{ Constraint, Layout, Rect },
     style::{ Color, Modifier, Style },
+    symbols::border,
     text::{ Line, Span },
     widgets::{ Block, BorderType, Gauge, List, Paragraph, Tabs, Wrap },
 };
@@ -11,7 +12,10 @@ use crate::{
     config::auto_tolerance,
     download::PARALLEL_PAGES,
     kakao::chapters::chapter::{ Chapter, Purchase },
-    tui::app::{ App, SLICE_TOGGLE, Screen },
+    tui::{
+        app::{ App, SLICE_TOGGLE, Screen },
+        ascii,
+    },
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -66,14 +70,43 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 fn panel(title: impl Into<String>) -> Block<'static> {
-    Block::bordered().border_type(BorderType::Rounded).title(title.into())
+    let title = ascii::convert(&title.into()).into_owned();
+    if ascii::enabled() {
+        Block::bordered().title(title).border_set(ASCII_BORDER)
+    } else {
+        Block::bordered().title(title).border_type(BorderType::Rounded)
+    }
+}
+
+const ASCII_BORDER: border::Set<'static> = border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+fn styled(text: impl AsRef<str>, style: Style) -> Span<'static> {
+    Span::styled(ascii::convert(text.as_ref()).into_owned(), style)
+}
+
+fn styled_line(text: impl AsRef<str>, style: Style) -> Line<'static> {
+    Line::styled(ascii::convert(text.as_ref()).into_owned(), style)
+}
+
+fn raw_line(text: impl AsRef<str>) -> Line<'static> {
+    Line::raw(ascii::convert(text.as_ref()).into_owned())
 }
 
 fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
-    let tabs = Tabs::new(TABS.to_vec())
+    let titles: Vec<String> = TABS.iter().map(|title| ascii::convert(title).into_owned()).collect();
+    let divider = if ascii::enabled() { "|" } else { "│" };
+    let tabs = Tabs::new(titles)
         .select(app.screen.tab())
         .padding(" ", " ")
-        .divider(Span::styled("│", Style::new().fg(DIM)))
+        .divider(Span::styled(divider, Style::new().fg(DIM)))
         .block(panel(" Kakao Downloader "))
         .highlight_style(
             Style::new().fg(Color::Rgb(18, 22, 30)).bg(ACCENT).add_modifier(Modifier::BOLD)
@@ -95,18 +128,17 @@ fn render_cookies(frame: &mut Frame, app: &App, area: Rect) {
         .block(panel(" Cookie (заголовок целиком) "));
     frame.render_widget(field, chunks[0]);
 
-    let help: Vec<Line> = COOKIE_HELP.iter()
-        .map(|line| Line::styled(*line, Style::new().fg(DIM)))
+    let help_lines: Vec<Line> = COOKIE_HELP.iter()
+        .map(|line| styled_line(line, Style::new().fg(DIM)))
         .collect();
     frame.render_widget(
-        Paragraph::new(help).wrap(Wrap { trim: false }).block(panel(" Как получить ")),
+        Paragraph::new(help_lines).wrap(Wrap { trim: false }).block(panel(" Как получить ")),
         chunks[1]
     );
-
     let headline = match &app.problem {
         Some(problem) if problem.auth =>
             Some(
-                Line::styled(
+                styled_line(
                     "Куки недействительны: войдите на page.kakao.com и вставьте заголовок Cookie заново.",
                     Style::new().fg(BAD).add_modifier(Modifier::BOLD)
                 )
@@ -116,7 +148,7 @@ fn render_cookies(frame: &mut Frame, app: &App, area: Rect) {
 
     let notice = app.notice
         .as_ref()
-        .map(|notice| Line::styled(notice.clone(), Style::new().fg(WARN)));
+        .map(|notice| styled_line(notice, Style::new().fg(WARN)));
 
     if headline.is_some() || notice.is_some() {
         let lines: Vec<Line> = headline.into_iter().chain(notice).collect();
@@ -140,7 +172,7 @@ fn render_title(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(
             vec![
-                Line::styled(
+                styled_line(
                     "например https://page.kakao.com/content/54801072/ или просто 54801072",
                     Style::new().fg(DIM)
                 ),
@@ -152,14 +184,12 @@ fn render_title(frame: &mut Frame, app: &App, area: Rect) {
 
     if let Some(notice) = &app.notice {
         frame.render_widget(
-            Paragraph::new(Line::styled(notice.clone(), Style::new().fg(WARN))).wrap(Wrap {
-                trim: true,
-            }),
+            Paragraph::new(styled_line(notice, Style::new().fg(WARN))).wrap(Wrap { trim: true }),
             chunks[2]
         );
     } else if app.busy {
         frame.render_widget(
-            Paragraph::new(Line::styled("загружаю список глав…", Style::new().fg(ACCENT))),
+            Paragraph::new(styled_line("загружаю список глав…", Style::new().fg(ACCENT))),
             chunks[2]
         );
     }
@@ -176,16 +206,11 @@ fn render_chapters(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let search = if app.search.value().trim().is_empty() && !app.search_active {
-        Line::from(
-            vec![
-                Span::styled("поиск ", search_style),
-                Span::styled("/  название или номер главы", search_style)
-            ]
-        )
+        Line::from(vec![styled("поиск ", search_style), styled("/  название или номер главы", search_style)])
     } else {
         Line::from(
             vec![
-                Span::styled("поиск ", search_style),
+                styled("поиск ", search_style),
                 Span::raw(app.search.visible(app.search_active))
             ]
         )
@@ -234,22 +259,27 @@ fn render_chapters(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let block = panel(" Главы ")
-        .title_top(Line::styled(stats, Style::new().fg(ACCENT)).right_aligned())
+        .title_top(Line::styled(ascii::convert(&stats).into_owned(), Style::new().fg(ACCENT)).right_aligned())
         .title_bottom(legend());
 
     frame.render_widget(List::new(rows).block(block), chunks[1]);
 }
 
 fn legend() -> Line<'static> {
+    let sep = if ascii::enabled() { "*" } else { "·" };
+    let rented = if ascii::enabled() { "+ arendovana " } else { " ✓ арендована " };
+    let ticket = if ascii::enabled() { " * za bilet " } else { " ◆ за билет " };
+    let denied = if ascii::enabled() { " x nelzya " } else { " ✕ нельзя " };
+    let stale = if ascii::enabled() { " ? kuki ustareli " } else { " ? куки устарели " };
     Line::from(
         vec![
-            Span::styled(" ✓ арендована ", Style::new().fg(OK)),
-            Span::styled("·", Style::new().fg(DIM)),
-            Span::styled(" ◆ за билет ", Style::new().fg(ACCENT)),
-            Span::styled("·", Style::new().fg(DIM)),
-            Span::styled(" ✕ нельзя ", Style::new().fg(BAD)),
-            Span::styled("·", Style::new().fg(DIM)),
-            Span::styled(" ? куки устарели ", Style::new().fg(WARN))
+            Span::styled(rented, Style::new().fg(OK)),
+            Span::styled(sep, Style::new().fg(DIM)),
+            Span::styled(ticket, Style::new().fg(ACCENT)),
+            Span::styled(sep, Style::new().fg(DIM)),
+            Span::styled(denied, Style::new().fg(BAD)),
+            Span::styled(sep, Style::new().fg(DIM)),
+            Span::styled(stale, Style::new().fg(WARN))
         ]
     )
 }
@@ -271,7 +301,7 @@ fn chapter_line(
             ),
             Span::raw(pad_right(&truncate_width(&chapter.title, title_width), title_width)),
             Span::raw("  "),
-            Span::styled(pad_left(badge, BADGE_WIDTH), Style::new().fg(color))
+            Span::styled(pad_left(&badge, BADGE_WIDTH), Style::new().fg(color))
         ]
     );
 
@@ -282,13 +312,14 @@ fn chapter_line(
     }
 }
 
-fn badge(chapter: &Chapter) -> (&'static str, Color) {
-    match (chapter.purchase, chapter.rentable) {
+fn badge(chapter: &Chapter) -> (String, Color) {
+    let (badge, color) = match (chapter.purchase, chapter.rentable) {
         (Purchase::Rent, _) => ("✓ арендована", OK),
         (Purchase::Unknown, _) => ("? куки устарели", WARN),
         (Purchase::NotPurchased, true) => ("◆ за билет", ACCENT),
         (Purchase::NotPurchased, false) => ("✕ нельзя", BAD),
-    }
+    };
+    (ascii::convert(badge).into_owned(), color)
 }
 
 fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
@@ -314,7 +345,7 @@ fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(
             Line::from(
                 vec![
-                    Span::styled(format!("{label:<LABEL_WIDTH$}"), style),
+                    styled(format!("{label:<LABEL_WIDTH$}"), style),
                     Span::raw(app.slice_inputs[index].visible(focused))
                 ]
             )
@@ -328,7 +359,10 @@ fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
         Style::new().fg(DIM)
     };
     let (value, value_style) = if app.config.parallel {
-        ("‹ да ›", Style::new().fg(OK).add_modifier(Modifier::BOLD))
+        let label = if ascii::enabled() { "< da >" } else { "‹ да ›" };
+        (label, Style::new().fg(OK).add_modifier(Modifier::BOLD))
+    } else if ascii::enabled() {
+        ("< net >", Style::new().fg(DIM))
     } else {
         ("‹ нет ›", Style::new().fg(DIM))
     };
@@ -336,9 +370,9 @@ fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(
         Line::from(
             vec![
-                Span::styled(format!("{:<LABEL_WIDTH$}", "параллельные страницы"), label_style),
+                styled(format!("{:<LABEL_WIDTH$}", "параллельные страницы"), label_style),
                 Span::styled(value, value_style),
-                Span::styled(format!("   до {PARALLEL_PAGES} страниц сразу"), Style::new().fg(DIM))
+                styled(format!("   до {PARALLEL_PAGES} страниц сразу"), Style::new().fg(DIM))
             ]
         )
     );
@@ -348,54 +382,52 @@ fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
     let chapter = app.chapter
         .as_ref()
         .map(|chapter| format!("#{} {}", chapter.index, truncate_width(&chapter.title, 60)))
-        .unwrap_or_else(|| "не выбрана".to_owned());
+        .unwrap_or_else(|| ascii::convert("не выбрана").into_owned());
 
     let mut lines = vec![
         Line::from(
             vec![
-                Span::styled("глава       ", Style::new().fg(DIM)),
-                Span::styled(chapter, Style::new().fg(ACCENT))
+                styled("глава       ", Style::new().fg(DIM)),
+                styled(&chapter, Style::new().fg(ACCENT))
             ]
         ),
         Line::from(
-            vec![Span::styled("страницы    ", Style::new().fg(DIM)), if app.config.parallel {
-                Span::styled(
-                    format!("параллельно, до {PARALLEL_PAGES} сразу"),
-                    Style::new().fg(ACCENT)
-                )
+            vec![styled("страницы    ", Style::new().fg(DIM)), if app.config.parallel {
+                styled(format!("параллельно, до {PARALLEL_PAGES} сразу"), Style::new().fg(ACCENT))
             } else {
-                Span::styled("по одной", Style::new().fg(ACCENT))
+                styled("по одной", Style::new().fg(ACCENT))
             }]
         ),
         Line::from(
             vec![
-                Span::styled("разброс     ", Style::new().fg(DIM)),
-                Span::raw(
+                styled("разброс     ", Style::new().fg(DIM)),
+                styled(
                     if app.tolerance_is_auto() {
                         format!("авто, spread / 8 = {}", auto_tolerance(app.config.spread))
                     } else {
                         format!("{} вручную", app.config.tolerance())
-                    }
+                    },
+                    Style::new()
                 )
             ]
         ),
         Line::from(
             vec![
-                Span::styled("результат   ", Style::new().fg(DIM)),
-                Span::raw("<out dir>/<глава>/slices/, страницы удаляются после нарезки")
+                styled("результат   ", Style::new().fg(DIM)),
+                styled("<out dir>/<глава>/slices/, страницы удаляются после нарезки", Style::new())
             ]
         ),
         Line::from(
             vec![
-                Span::styled("config      ", Style::new().fg(DIM)),
-                Span::raw("параметры сохраняются автоматически")
+                styled("config      ", Style::new().fg(DIM)),
+                styled("параметры сохраняются автоматически", Style::new())
             ]
         )
     ];
 
     if app.config.parallel {
         lines.push(
-            Line::styled(
+            styled_line(
                 "внимание: параллельные запросы сервер может принять за бота",
                 Style::new().fg(WARN)
             )
@@ -405,7 +437,7 @@ fn render_slice(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     if let Some(notice) = &app.notice {
-        lines.push(Line::styled(notice.clone(), Style::new().fg(WARN)));
+        lines.push(styled_line(notice, Style::new().fg(WARN)));
     }
 
     frame.render_widget(
@@ -418,18 +450,18 @@ fn render_confirm(frame: &mut Frame, app: &App, area: Rect) {
     let chapter = app.chapter
         .as_ref()
         .map(|chapter| format!("#{} {}", chapter.index, chapter.title))
-        .unwrap_or_else(|| "глава не выбрана".to_owned());
+        .unwrap_or_else(|| ascii::convert("глава не выбрана").into_owned());
 
     let lines = vec![
-        Line::styled(
+        styled_line(
             "Глава не арендована, но её можно арендовать за билет",
             Style::new().fg(WARN).add_modifier(Modifier::BOLD)
         ),
         Line::raw(""),
-        Line::raw(chapter),
+        raw_line(&chapter),
         Line::raw(""),
-        Line::raw("Enter — списать билет, арендовать главу и начать загрузку."),
-        Line::styled("Esc — вернуться к параметрам нарезки, не тратя билет.", Style::new().fg(DIM))
+        raw_line("Enter — списать билет, арендовать главу и начать загрузку."),
+        styled_line("Esc — вернуться к параметрам нарезки, не тратя билет.", Style::new().fg(DIM))
     ];
 
     frame.render_widget(
@@ -450,36 +482,49 @@ fn render_run(frame: &mut Frame, app: &App, area: Rect) {
     let chapter = app.chapter
         .as_ref()
         .map(|chapter| format!("#{} {}", chapter.index, truncate_width(&chapter.title, 60)))
-        .unwrap_or_else(|| "глава не выбрана".to_owned());
+        .unwrap_or_else(|| ascii::convert("глава не выбрана").into_owned());
 
     frame.render_widget(
         Paragraph::new(
             Line::from(
                 vec![
-                    Span::styled("глава ", Style::new().fg(DIM)),
-                    Span::styled(chapter, Style::new().add_modifier(Modifier::BOLD))
+                    styled("глава ", Style::new().fg(DIM)),
+                    styled(&chapter, Style::new().add_modifier(Modifier::BOLD))
                 ]
             )
         ),
         chunks[0]
     );
 
-    let gauge = Gauge::default()
-        .block(panel(" Прогресс "))
-        .ratio((app.run.percent as f64) / 100.0)
-        .gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(30, 36, 46)))
-        .label(format!("{}%", app.run.percent));
-    frame.render_widget(gauge, chunks[1]);
+    if ascii::enabled() {
+        let width = chunks[1].width.saturating_sub(2) as usize;
+        let label = format!("{}%", app.run.percent);
+        let bar_width = width.saturating_sub(label.len() + 3).max(10);
+        let filled = ((bar_width as f64) * (app.run.percent as f64) / 100.0).round() as usize;
+        let filled = filled.min(bar_width);
+        let bar = format!(
+            "[{:#<filled$}{:-<empty$}] {label}",
+            "",
+            "",
+            filled = filled,
+            empty = bar_width - filled
+        );
+        frame.render_widget(Paragraph::new(styled_line(&bar, Style::new().fg(ACCENT))).block(panel(" Progress ")), chunks[1]);
+    } else {
+        let gauge = Gauge::default()
+            .block(panel(" Прогресс "))
+            .ratio((app.run.percent as f64) / 100.0)
+            .gauge_style(Style::new().fg(ACCENT).bg(Color::Rgb(30, 36, 46)))
+            .label(format!("{}%", app.run.percent));
+        frame.render_widget(gauge, chunks[1]);
+    }
 
     frame.render_widget(
         Paragraph::new(
             Line::from(
                 vec![
-                    Span::styled(
-                        format!("{} ", app.run.stage),
-                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
-                    ),
-                    Span::styled(app.run.detail.clone(), Style::new().fg(WARN))
+                    styled(format!("{} ", app.run.stage), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)),
+                    styled(&app.run.detail, Style::new().fg(WARN))
                 ]
             )
         ),
@@ -492,12 +537,12 @@ fn render_run(frame: &mut Frame, app: &App, area: Rect) {
         .rev()
         .take(height)
         .rev()
-        .map(|line| Line::styled(line.clone(), Style::new().fg(DIM)))
+        .map(|line| styled_line(line, Style::new().fg(DIM)))
         .collect();
 
     let title = match &app.run.summary {
-        Some(summary) => format!(" Журнал · {summary} "),
-        None => " Журнал ".to_owned(),
+        Some(summary) => format!(" Журнал {} ", ascii::convert(&format!("· {summary}"))),
+        None => ascii::convert(" Журнал ").into_owned(),
     };
 
     frame.render_widget(Paragraph::new(log).block(panel(title)), chunks[3]);
@@ -510,17 +555,21 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
                 .lines()
                 .enumerate()
                 .map(|(index, text)| {
-                    let prefix = if index == 0 { "Проблема: " } else { "" };
-                    Line::styled(format!("{prefix}{text}"), Style::new().fg(BAD))
+                    let prefix = if index == 0 {
+                        ascii::convert("Проблема: ").into_owned()
+                    } else {
+                        String::new()
+                    };
+                    styled_line(format!("{prefix}{text}"), Style::new().fg(BAD))
                 })
                 .collect();
 
             lines.push(
                 chips(
                     &[
-                        ("R", "повторить"),
-                        ("C", "ввести куки заново"),
-                        ("Esc", "скрыть"),
+                        ("R".to_owned(), ascii::convert("повторить").into_owned()),
+                        ("C".to_owned(), ascii::convert("ввести куки заново").into_owned()),
+                        ("Esc".to_owned(), ascii::convert("скрыть").into_owned()),
                     ]
                 )
             );
@@ -531,7 +580,7 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
             match &app.notice {
                 Some(notice) =>
                     vec![
-                        Line::styled(notice.clone(), Style::new().fg(WARN)),
+                        styled_line(notice, Style::new().fg(WARN)),
                         chips(&app.hotkeys())
                     ],
                 None => vec![chips(&app.hotkeys())],
@@ -541,26 +590,27 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
-fn chips(keys: &[(&'static str, &'static str)]) -> Line<'static> {
+fn chips(keys: &[(String, String)]) -> Line<'static> {
     let mut spans = Vec::new();
 
     for (index, (key, description)) in keys.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled("  │  ", Style::new().fg(DIM)));
+            spans.push(styled(if ascii::enabled() { "  |  " } else { "  │  " }, Style::new().fg(DIM)));
         }
 
-        spans.push(
-            Span::styled((*key).to_owned(), Style::new().fg(ACCENT).add_modifier(Modifier::BOLD))
-        );
-        spans.push(Span::styled(format!(" {description}"), Style::new().fg(DIM)));
+        spans.push(styled(key, Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)));
+        spans.push(styled(format!(" {description}"), Style::new().fg(DIM)));
     }
 
     Line::from(spans)
 }
 
 fn truncate_width(text: &str, limit: usize) -> String {
-    if UnicodeWidthStr::width(text) <= limit {
-        return text.to_owned();
+    let text = ascii::convert(text);
+    let reserve = if ascii::enabled() { 3 } else { 1 };
+
+    if UnicodeWidthStr::width(text.as_ref()) <= limit {
+        return text.into_owned();
     }
 
     let mut shortened = String::new();
@@ -568,7 +618,7 @@ fn truncate_width(text: &str, limit: usize) -> String {
 
     for character in text.chars() {
         let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-        if width + character_width > limit.saturating_sub(1) {
+        if width + character_width > limit.saturating_sub(reserve) {
             break;
         }
 
@@ -576,20 +626,26 @@ fn truncate_width(text: &str, limit: usize) -> String {
         width += character_width;
     }
 
-    shortened.push('…');
+    if ascii::enabled() {
+        shortened.push_str("...");
+    } else {
+        shortened.push('…');
+    }
     shortened
 }
 
 fn pad_right(text: &str, width: usize) -> String {
-    let current = UnicodeWidthStr::width(text);
-    let mut padded = text.to_owned();
+    let text = ascii::convert(text);
+    let current = UnicodeWidthStr::width(text.as_ref());
+    let mut padded = text.into_owned();
     padded.push_str(&" ".repeat(width.saturating_sub(current)));
     padded
 }
 
 fn pad_left(text: &str, width: usize) -> String {
-    let current = UnicodeWidthStr::width(text);
+    let text = ascii::convert(text);
+    let current = UnicodeWidthStr::width(text.as_ref());
     let mut padded = " ".repeat(width.saturating_sub(current));
-    padded.push_str(text);
+    padded.push_str(&text);
     padded
 }

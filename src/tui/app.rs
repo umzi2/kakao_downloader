@@ -339,15 +339,17 @@ impl App {
     }
 
     pub fn filtered(&self) -> Vec<usize> {
-        let needle = self.search.value().trim().to_lowercase();
+        let needle_raw = self.search.value().trim().to_lowercase();
+        let needle = crate::tui::ascii::transliterate(&needle_raw).to_lowercase();
 
         self.chapters
             .iter()
             .enumerate()
             .filter(|(_, chapter)| {
-                needle.is_empty() ||
-                    chapter.title.to_lowercase().contains(&needle) ||
-                    chapter.index.to_string().contains(&needle)
+                needle_raw.is_empty() ||
+                    chapter.title.to_lowercase().contains(&needle_raw) ||
+                    crate::tui::ascii::transliterate(&chapter.title).to_lowercase().contains(&needle) ||
+                    chapter.index.to_string().contains(&needle_raw)
             })
             .map(|(index, _)| index)
             .collect()
@@ -357,35 +359,40 @@ impl App {
         self.filtered().len().div_ceil(self.per_page()).max(1)
     }
 
-    pub fn hotkeys(&self) -> Vec<(&'static str, &'static str)> {
-        let mut keys: Vec<(&'static str, &'static str)> = vec![("←→", "вкладки (или 1-5)")];
+    pub fn hotkeys(&self) -> Vec<(String, String)> {
+        let ascii = crate::tui::ascii::enabled();
+        let arrows = if ascii { "<>" } else { "←→" };
+        let updown = if ascii { "^v" } else { "↑↓" };
+
+        let mut keys: Vec<(String, String)> = vec![(arrows.to_owned(), crate::tui::ascii::convert("вкладки (или 1-5)").into_owned())];
 
         keys.extend(match self.screen {
-            Screen::Cookies => vec![("Enter", "сохранить куки"), ("Esc", "назад")],
-            Screen::Title => vec![("Enter", "загрузить список глав")],
+            Screen::Cookies => vec![("Enter".to_owned(), "сохранить куки"), ("Esc".to_owned(), "назад")],
+            Screen::Title => vec![("Enter".to_owned(), "загрузить список глав")],
             Screen::Chapters =>
                 vec![
-                    ("/", "поиск"),
-                    ("↑↓", "выбор"),
-                    ("PgUp/PgDn", "страница"),
-                    ("Enter", "глава"),
-                    ("R", "обновить"),
-                    ("C", "куки"),
-                    ("N", "тайтл")
+                    ("/".to_owned(), "поиск"),
+                    (updown.to_owned(), "выбор"),
+                    ("PgUp/PgDn".to_owned(), "страница"),
+                    ("Enter".to_owned(), "глава"),
+                    ("R".to_owned(), "обновить"),
+                    ("C".to_owned(), "куки"),
+                    ("N".to_owned(), "тайтл")
                 ],
             Screen::Slice =>
                 vec![
-                    ("Tab/↑↓", "поле"),
-                    ("←→/Space", "переключатель"),
-                    ("Enter", "запустить"),
-                    ("Esc", "к списку")
+                    (format!("Tab/{updown}"), "поле"),
+                    (format!("{arrows}/Space"), "переключатель"),
+                    ("Enter".to_owned(), "запустить"),
+                    ("Esc".to_owned(), "к списку")
                 ],
-            Screen::Confirm => vec![("Enter", "арендовать и скачать"), ("Esc", "назад")],
-            Screen::Run => vec![("Esc", "прервать/назад"), ("C", "куки"), ("Q", "выход")],
-        });
+            Screen::Confirm => vec![("Enter".to_owned(), "арендовать и скачать"), ("Esc".to_owned(), "назад")],
+            Screen::Run => vec![("Esc".to_owned(), "прервать/назад"), ("C".to_owned(), "куки"), ("Q".to_owned(), "выход")],
+        }.into_iter().map(|(key, description)| (key, crate::tui::ascii::convert(description).into_owned())));
 
         if self.has_text_focus() {
-            keys.push(("Ctrl+←→", "курсор в поле"));
+            let key = if ascii { "Ctrl+<>".to_owned() } else { format!("Ctrl+{arrows}") };
+            keys.push((key, crate::tui::ascii::convert("курсор в поле").into_owned()));
         }
 
         keys

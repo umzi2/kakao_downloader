@@ -1,4 +1,5 @@
 pub mod app;
+pub(crate) mod ascii;
 mod input;
 mod tasks;
 mod ui;
