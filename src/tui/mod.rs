@@ -5,9 +5,11 @@ mod ui;
 
 use std::io::{ Stdout, stdout };
 
-use crossterm::{ event::{ DisableBracketedPaste, EnableBracketedPaste, Event }, execute };
+use crossterm::{
+    event::{ DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind },
+    execute,
+};
 use tokio::sync::mpsc::UnboundedSender;
-
 use crate::error::{ Context, Result };
 
 pub async fn run() -> Result<()> {
@@ -29,6 +31,12 @@ fn enable_paste(out: &mut Stdout) -> Result<()> {
 pub fn spawn_input_reader(sender: UnboundedSender<Event>) {
     std::thread::spawn(move || {
         while let Ok(event) = crossterm::event::read() {
+            if matches!(
+                event,
+                Event::Key(key) if key.kind == KeyEventKind::Release
+            ) {
+                continue;
+            }
             if sender.send(event).is_err() {
                 break;
             }
